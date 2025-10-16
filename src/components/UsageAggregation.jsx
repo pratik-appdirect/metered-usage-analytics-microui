@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import './UsageAggregation.css';
-import { fetchAggregatedUsage, getMockAggregatedData } from '../services/usageAggregationService';
+import { fetchAggregatedUsage, getMockAggregatedData, searchUsageByCollection, fetchTimelineData } from '../services/usageAggregationService';
 
 const UsageAggregation = () => {
   const [requestGroupId, setRequestGroupId] = useState('');
@@ -13,6 +13,11 @@ const UsageAggregation = () => {
   const [error, setError] = useState(null);
   const [selectedTimeline, setSelectedTimeline] = useState(null);
   const [timelineData, setTimelineData] = useState(null);
+  const [selectedCollection, setSelectedCollection] = useState(null);
+  const [collectionData, setCollectionData] = useState(null);
+  const [collectionLoading, setCollectionLoading] = useState(false);
+  const [collectionError, setCollectionError] = useState(null);
+  const [currentPage, setCurrentPage] = useState(0);
 
   const aggregationOptions = [
     { 
@@ -152,6 +157,10 @@ const UsageAggregation = () => {
     setUsageData([]);
     setSelectedTimeline(null);
     setTimelineData(null);
+    setSelectedCollection(null);
+    setCollectionData(null);
+    setCollectionError(null);
+    setCurrentPage(0);
   };
 
   const handleViewTimeline = async (row) => {
@@ -161,33 +170,139 @@ const UsageAggregation = () => {
     if (selectedTimeline === row) {
       setSelectedTimeline(null);
       setTimelineData(null);
+      setSelectedCollection(null);
+      setCollectionData(null);
       return;
     }
     
     setSelectedTimeline(row);
+    setSelectedCollection(null);
+    setCollectionData(null);
+    setLoading(true);
     
-    // Fetch timeline data - using mock data for now
-    // TODO: Replace with actual API call
-    const timeline = {
-      usageItems: {
-        quantity: row.aggregatedTotal * 1.1,
-        totalPrice: row.aggregatedTotal * 1.1
-      },
-      usageItemsRated: {
-        quantity: row.aggregatedTotal,
-        totalPrice: row.aggregatedTotal
-      },
-      usageItemsFailed: {
-        quantity: row.aggregatedTotal * 0.1,
-        totalPrice: row.aggregatedTotal * 0.1
-      },
-      usageBillingItems: {
-        quantity: row.aggregatedTotal,
-        totalPrice: row.aggregatedTotal
+    try {
+      // If aggregation table contains SKU column, use SKU from the row
+      const hasSKUColumn = aggregationType === 'sku' || skuId.trim();
+      const unitParam = hasSKUColumn ? (row.skuId || '') : skuId;
+      
+      // Fetch timeline data from API
+      const response = await fetchTimelineData(
+        requestGroupId,
+        entityId,
+        entityType,
+        unitParam,
+        aggregationType
+      );
+      
+      // Transform API response to timeline data structure
+      const timeline = {};
+      
+      if (response.events && Array.isArray(response.events)) {
+        response.events.forEach(event => {
+          // Get aggregated values from the first result (if exists)
+          const aggregationResult = event.aggregationResults && event.aggregationResults.length > 0 
+            ? event.aggregationResults[0] 
+            : null;
+          
+          const quantity = aggregationResult?.sumValues?.quantity || 0;
+          const totalPrice = aggregationResult?.sumValues?.totalPrice || 0;
+          
+          // Map displayName to timeline keys
+          switch(event.displayName) {
+            case 'Billing Items':
+              timeline.usageBillingItems = { quantity, totalPrice };
+              break;
+            case 'Usage Items Rated':
+              timeline.usageItemsRated = { quantity, totalPrice };
+              break;
+            case 'Usage Items':
+              timeline.usageItems = { quantity, totalPrice };
+              break;
+            case 'Failed Items':
+              timeline.usageItemsFailed = { quantity, totalPrice };
+              break;
+            default:
+              break;
+          }
+        });
       }
-    };
+      
+      setTimelineData(timeline);
+    } catch (err) {
+      console.error('Error fetching timeline data:', err);
+      setError(err.message || 'Failed to fetch timeline data');
+      setTimelineData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCollectionClick = async (collectionName) => {
+    console.log('Collection clicked:', collectionName);
     
-    setTimelineData(timeline);
+    // If clicking the same collection, toggle it off
+    if (selectedCollection === collectionName) {
+      setSelectedCollection(null);
+      setCollectionData(null);
+      setCurrentPage(0);
+      return;
+    }
+    
+    setSelectedCollection(collectionName);
+    setCollectionLoading(true);
+    setCollectionError(null);
+    setCurrentPage(0);
+    
+    try {
+      // If aggregation table contains SKU column, use SKU from the clicked row
+      const hasSKUColumn = aggregationType === 'sku' || skuId.trim();
+      const unitParam = hasSKUColumn ? (selectedTimeline?.skuId || '') : skuId;
+      
+      const data = await searchUsageByCollection(
+        collectionName,
+        requestGroupId,
+        entityId,
+        entityType,
+        unitParam,
+        0,
+        10
+      );
+      setCollectionData(data);
+    } catch (err) {
+      setCollectionError(err.message);
+      setCollectionData(null);
+    } finally {
+      setCollectionLoading(false);
+    }
+  };
+
+  const handlePageChange = async (newPage) => {
+    if (!selectedCollection) return;
+    
+    setCollectionLoading(true);
+    setCollectionError(null);
+    
+    try {
+      // If aggregation table contains SKU column, use SKU from the clicked row
+      const hasSKUColumn = aggregationType === 'sku' || skuId.trim();
+      const unitParam = hasSKUColumn ? (selectedTimeline?.skuId || '') : skuId;
+      
+      const data = await searchUsageByCollection(
+        selectedCollection,
+        requestGroupId,
+        entityId,
+        entityType,
+        unitParam,
+        newPage,
+        10
+      );
+      setCollectionData(data);
+      setCurrentPage(newPage);
+    } catch (err) {
+      setCollectionError(err.message);
+    } finally {
+      setCollectionLoading(false);
+    }
   };
 
   return (
@@ -354,63 +469,81 @@ const UsageAggregation = () => {
           
           <div className="timeline-flow">
             <div className="timeline-row">
-              <div className={`timeline-stage ${hasFailedItems(timelineData) ? 'has-down-arrow' : ''}`}>
-                <div className="stage-box">
-                  <div className="stage-header">Usage Items</div>
-                  <div className="stage-content">
-                    <div className="stage-metric">
-                      <span className="metric-label">Quantity</span>
-                      <span className="metric-value">{timelineData.usageItems.quantity.toFixed(2)}</span>
-                    </div>
-                    <div className="stage-metric">
-                      <span className="metric-label">Total Price</span>
-                      <span className="metric-value">{timelineData.usageItems.totalPrice.toFixed(2)}</span>
+              {timelineData.usageItems && (
+                <div className={`timeline-stage ${hasFailedItems(timelineData) ? 'has-down-arrow' : ''}`}>
+                  <div 
+                    className={`stage-box clickable ${selectedCollection === 'usageItems' ? 'selected' : ''}`}
+                    onClick={() => handleCollectionClick('usageItems')}
+                  >
+                    <div className="stage-header">Usage Items</div>
+                    <div className="stage-content">
+                      <div className="stage-metric">
+                        <span className="metric-label">Quantity</span>
+                        <span className="metric-value">{timelineData.usageItems.quantity.toFixed(2)}</span>
+                      </div>
+                      <div className="stage-metric">
+                        <span className="metric-label">Total Price</span>
+                        <span className="metric-value">{timelineData.usageItems.totalPrice.toFixed(2)}</span>
+                      </div>
                     </div>
                   </div>
+                  {hasFailedItems(timelineData) && <div className="arrow-down-to-failed"></div>}
+                  <div className="arrow-connector"></div>
                 </div>
-                {hasFailedItems(timelineData) && <div className="arrow-down-to-failed"></div>}
-                <div className="arrow-connector"></div>
-              </div>
+              )}
 
-              <div className={`timeline-stage ${hasFailedItems(timelineData) ? 'has-down-arrow' : ''}`}>
-                <div className="stage-box">
-                  <div className="stage-header">Usage Items Rated</div>
-                  <div className="stage-content">
-                    <div className="stage-metric">
-                      <span className="metric-label">Quantity</span>
-                      <span className="metric-value">{timelineData.usageItemsRated.quantity.toFixed(2)}</span>
-                    </div>
-                    <div className="stage-metric">
-                      <span className="metric-label">Total Price</span>
-                      <span className="metric-value">{timelineData.usageItemsRated.totalPrice.toFixed(2)}</span>
+              {timelineData.usageItemsRated && (
+                <div className={`timeline-stage ${hasFailedItems(timelineData) ? 'has-down-arrow' : ''}`}>
+                  <div 
+                    className={`stage-box clickable ${selectedCollection === 'usageItemsRated' ? 'selected' : ''}`}
+                    onClick={() => handleCollectionClick('usageItemsRated')}
+                  >
+                    <div className="stage-header">Usage Items Rated</div>
+                    <div className="stage-content">
+                      <div className="stage-metric">
+                        <span className="metric-label">Quantity</span>
+                        <span className="metric-value">{timelineData.usageItemsRated.quantity.toFixed(2)}</span>
+                      </div>
+                      <div className="stage-metric">
+                        <span className="metric-label">Total Price</span>
+                        <span className="metric-value">{timelineData.usageItemsRated.totalPrice.toFixed(2)}</span>
+                      </div>
                     </div>
                   </div>
+                  {hasFailedItems(timelineData) && <div className="arrow-down-to-failed-short"></div>}
+                  <div className="arrow-connector"></div>
                 </div>
-                {hasFailedItems(timelineData) && <div className="arrow-down-to-failed-short"></div>}
-                <div className="arrow-connector"></div>
-              </div>
+              )}
 
-              <div className="timeline-stage">
-                <div className="stage-box">
-                  <div className="stage-header">Usage Billing Items</div>
-                  <div className="stage-content">
-                    <div className="stage-metric">
-                      <span className="metric-label">Quantity</span>
-                      <span className="metric-value">{timelineData.usageBillingItems.quantity.toFixed(2)}</span>
-                    </div>
-                    <div className="stage-metric">
-                      <span className="metric-label">Total Price</span>
-                      <span className="metric-value">{timelineData.usageBillingItems.totalPrice.toFixed(2)}</span>
+              {timelineData.usageBillingItems && (
+                <div className="timeline-stage">
+                  <div 
+                    className={`stage-box clickable ${selectedCollection === 'usageBillingItems' ? 'selected' : ''}`}
+                    onClick={() => handleCollectionClick('usageBillingItems')}
+                  >
+                    <div className="stage-header">Usage Billing Items</div>
+                    <div className="stage-content">
+                      <div className="stage-metric">
+                        <span className="metric-label">Quantity</span>
+                        <span className="metric-value">{timelineData.usageBillingItems.quantity.toFixed(2)}</span>
+                      </div>
+                      <div className="stage-metric">
+                        <span className="metric-label">Total Price</span>
+                        <span className="metric-value">{timelineData.usageBillingItems.totalPrice.toFixed(2)}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {hasFailedItems(timelineData) && (
               <div className="timeline-row timeline-row-failed">
                 <div className="failed-box-wrapper">
-                  <div className="stage-box failed">
+                  <div 
+                    className={`stage-box failed clickable ${selectedCollection === 'usageItemsFailed' ? 'selected' : ''}`}
+                    onClick={() => handleCollectionClick('usageItemsFailed')}
+                  >
                     <div className="stage-header">Usage Items Failed</div>
                     <div className="stage-content">
                       <div className="stage-metric">
@@ -427,6 +560,78 @@ const UsageAggregation = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {selectedCollection && collectionData && collectionData.content && (
+        <div className="collection-results-section">
+          <h3 className="collection-title">
+            {selectedCollection === 'usageItems' && 'Usage Items'}
+            {selectedCollection === 'usageItemsRated' && 'Usage Items Rated'}
+            {selectedCollection === 'usageBillingItems' && 'Usage Billing Items'}
+            {selectedCollection === 'usageItemsFailed' && 'Usage Items Failed'}
+          </h3>
+
+          {collectionLoading && <div className="loading-message">Loading...</div>}
+          {collectionError && <div className="error-message">{collectionError}</div>}
+
+          {!collectionLoading && !collectionError && collectionData.content && collectionData.content.length > 0 && (
+            <>
+              <div className="table-container">
+                <table className="results-table">
+                  <thead>
+                    <tr>
+                      <th>Request Group Id</th>
+                      <th>{entityType === 'entitlement' ? 'Entitlement Id' : 'Account Id'}</th>
+                      <th>SKU</th>
+                      <th>Quantity</th>
+                      <th>Unit Price</th>
+                      <th>Total Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {collectionData.content.map((item, index) => (
+                      <tr key={index}>
+                        <td>{item.requestGroupId || '-'}</td>
+                        <td>{entityType === 'entitlement' ? (item.subscriptionId || '-') : (item.accountId || '-')}</td>
+                        <td>{item.unit || '-'}</td>
+                        <td>{item.quantity != null ? Number(item.quantity).toFixed(2) : '-'}</td>
+                        <td>{item.unitPrice != null ? Number(item.unitPrice).toFixed(2) : '-'}</td>
+                        <td className="total-cell">{item.totalPrice != null ? Number(item.totalPrice).toFixed(2) : '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {collectionData.page && (
+                <div className="pagination-controls">
+                  <button
+                    className="pagination-button"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 0 || collectionLoading}
+                  >
+                    Previous
+                  </button>
+                  <span className="pagination-info">
+                    Page {collectionData.page.number + 1} of {collectionData.page.totalPages || 1}
+                    {' '}({collectionData.page.totalElements || 0} total items)
+                  </span>
+                  <button
+                    className="pagination-button"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={!collectionData.page.hasNext || collectionLoading}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {!collectionLoading && !collectionError && (!collectionData.content || collectionData.content.length === 0) && (
+            <div className="no-results-message">No results found</div>
+          )}
         </div>
       )}
     </div>

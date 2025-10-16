@@ -159,23 +159,57 @@ export const getMockAggregatedData = (requestGroupId, entityId, entityType, aggr
 /**
  * Fetches timeline data for a specific usage row
  */
-export const fetchTimelineData = async (requestGroupId, entityId, entityType, skuId) => {
+export const fetchTimelineData = async (requestGroupId, entityId, entityType, skuId, aggregationType) => {
   try {
-    const response = await fetch('/api/usage/timeline', {
+    // Build search criteria
+    const searchCriteria = {
+      requestGroupId
+    };
+
+    // Add accountId or subscriptionId based on entityType
+    if (entityType === 'entitlement') {
+      searchCriteria.subscriptionId = entityId;
+    } else {
+      searchCriteria.accountId = entityId;
+    }
+
+    // Add unit/SKU if provided
+    if (skuId && skuId.trim()) {
+      searchCriteria.unit = skuId;
+    }
+
+    // Build aggregation criteria based on aggregationType
+    let groupBy;
+    if (aggregationType === 'sku') {
+      groupBy = ['UNIT'];
+    } else {
+      // requestGroup aggregation
+      if (entityType === 'entitlement') {
+        groupBy = ['REQUEST_GROUP_ID', 'SUBSCRIPTION_ID'];
+      } else {
+        groupBy = ['REQUEST_GROUP_ID', 'ACCOUNT_ID'];
+      }
+    }
+
+    const requestBody = {
+      searchCriteria,
+      aggregationCriteria: {
+        groupBy,
+        measures: ['TOTAL_PRICE', 'QUANTITY'],
+        aggregationType: 'SUM'
+      }
+    };
+
+    const response = await fetch('/api/v1/usage-analytics/timeline', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        requestGroupId,
-        entityId,
-        entityType,
-        skuId: skuId || undefined
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
+      const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.message || 'Failed to fetch timeline data');
     }
 
@@ -183,6 +217,50 @@ export const fetchTimelineData = async (requestGroupId, entityId, entityType, sk
     return data;
   } catch (error) {
     console.error('Error fetching timeline data:', error);
+    throw error;
+  }
+};
+
+/**
+ * Searches usage items by collection
+ */
+export const searchUsageByCollection = async (usageCollection, requestGroupId, entityId, entityType, skuId, page = 0, size = 10) => {
+  try {
+    // Build query parameters
+    const params = new URLSearchParams({
+      requestGroupId,
+      page: page.toString(),
+      size: size.toString()
+    });
+
+    // Add accountId or subscriptionId based on entityType
+    if (entityType === 'entitlement') {
+      params.append('subscriptionId', entityId);
+    } else {
+      params.append('accountId', entityId);
+    }
+
+    // Add unit/SKU if provided
+    if (skuId && skuId.trim()) {
+      params.append('unit', skuId);
+    }
+
+    const response = await fetch(`/api/v1/usage-analytics/search/${usageCollection}?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `Failed to fetch ${usageCollection} data`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`Error fetching ${usageCollection}:`, error);
     throw error;
   }
 };

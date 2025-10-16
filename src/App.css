@@ -20,6 +20,8 @@
 
 main {
   padding: 40px 20px;
+  position: relative;
+  overflow: hidden;
 }
 
 @media (max-width: 768px) {
