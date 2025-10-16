@@ -169,10 +169,6 @@ const UsageAggregation = () => {
     // Fetch timeline data - using mock data for now
     // TODO: Replace with actual API call
     const timeline = {
-      usageRequestRaw: {
-        quantity: row.aggregatedTotal * 1.2,
-        totalPrice: row.aggregatedTotal * 1.2
-      },
       usageItems: {
         quantity: row.aggregatedTotal * 1.1,
         totalPrice: row.aggregatedTotal * 1.1
@@ -358,23 +354,6 @@ const UsageAggregation = () => {
           
           <div className="timeline-flow">
             <div className="timeline-row">
-              <div className="timeline-stage">
-                <div className="stage-box">
-                  <div className="stage-header">Usage Request Raw</div>
-                  <div className="stage-content">
-                    <div className="stage-metric">
-                      <span className="metric-label">Quantity</span>
-                      <span className="metric-value">{timelineData.usageRequestRaw.quantity.toFixed(2)}</span>
-                    </div>
-                    <div className="stage-metric">
-                      <span className="metric-label">Total Price</span>
-                      <span className="metric-value">{timelineData.usageRequestRaw.totalPrice.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="arrow-connector"></div>
-              </div>
-
               <div className={`timeline-stage ${hasFailedItems(timelineData) ? 'has-down-arrow' : ''}`}>
                 <div className="stage-box">
                   <div className="stage-header">Usage Items</div>
